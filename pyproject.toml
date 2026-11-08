@@ -1,0 +1,36 @@
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
+[project]
+name = "cev-py"
+version = "0.1.0"
+description = "Typed, calibrated decisions from a small local LLM in one forward pass: is this true, which of these, which level. The cev engine in-process (Metal, Accelerate, multi-core CPU), with a decision log, feedback and online learning."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Carter Cole" }]
+keywords = ["cev", "llm", "local-llm", "classification", "routing", "calibration", "qwen", "candle", "online-learning"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Engine = "https://github.com/CarterCole/rust-cev"
+
+[dependency-groups]
+dev = ["maturin>=1.9,<2", "pytest>=8"]
+
+[tool.maturin]
+module-name = "cev._native"
+python-source = "python"
+# Also for editable installs: a debug build of the engine is unusably slow.
+profile = "release"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

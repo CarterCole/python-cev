@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+        python: ['3.11', '3.13']
+    runs-on: ${{ matrix.os }}
+    name: Python ${{ matrix.python }} on ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: python-cev
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: python-cev
+      # The engine is a path dependency: Cargo.toml expects it next door.
+      - uses: actions/checkout@v5
+        with:
+          repository: CarterCole/rust-cev
+          path: rust-cev
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: rustup toolchain install stable --profile minimal && rustup default stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            python-cev/target
+          key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('python-cev/Cargo.lock') }}
+      - run: pip install uv
+      - run: uv sync --python ${{ matrix.python }}
+      - run: uv run pytest

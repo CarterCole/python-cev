@@ -1,0 +1,10 @@
+target/
+.venv/
+dist/
+__pycache__/
+*.so
+*.pyd
+*.db
+*.db-shm
+*.db-wal
+.pytest_cache/
