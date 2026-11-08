@@ -29,7 +29,7 @@ the two APIs in step.
 ## Commands
 
 ```bash
-uv sync                              # build the module (release) into .venv; needs ../rust-cev
+uv sync                              # build the module (release) into .venv; the engine comes from crates.io
 uv run pytest                        # no weights needed
 uv run maturin develop --release     # rebuild after changing src/lib.rs
 CEV_TEST_MODEL=Qwen/Qwen3-0.6B uv run pytest   # also run the real-model test
@@ -60,7 +60,10 @@ change done.
 ## Releasing
 
 Not automated yet: there are no wheels on PyPI, so the package is built from
-source. Publishing needs the cev crates on crates.io first (then drop the
-`path` keys in `Cargo.toml`) and a CI job that builds wheels per platform
+source. The cev crates are on crates.io (pinned in `Cargo.lock`; take a new
+engine release with `cargo update -p cev-core -p cev-model -p cev-runtime`,
+raising the requirements in `Cargo.toml` first for a new minor version).
+Publishing still needs a CI job that builds wheels per platform
 (`maturin build --release`; one abi3 wheel per platform covers every Python).
+To build against an engine checkout, see "Building from source" in the README.
 The PyPI names `cev` and `pycev` are taken; this distribution is `cev-py`.

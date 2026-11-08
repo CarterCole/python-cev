@@ -20,12 +20,11 @@ cuda = ["cev-model/cuda"]
 
 [dependencies]
 # The engine lives in https://github.com/CarterCole/rust-cev and is published
-# on its own; nothing from it is copied here. Until the crates are on
-# crates.io they come from a checkout next to this repository (drop `path`
-# then).
-cev-core = { version = "0.1.0", path = "../rust-cev/crates/cev-core" }
-cev-model = { version = "0.1.0", path = "../rust-cev/crates/cev-model" }
-cev-runtime = { version = "0.1.0", path = "../rust-cev/crates/cev-runtime" }
+# on crates.io; nothing from it is copied here. To build against a checkout
+# instead, see "Building from source" in the README.
+cev-core = "0.2.1"
+cev-model = "0.2.1"
+cev-runtime = "0.2.1"
 
 pyo3 = { version = "0.29", features = ["extension-module", "abi3-py311"] }
 serde = { version = "1", features = ["derive"] }
@@ -35,7 +34,7 @@ anyhow = "1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-cev-model = { version = "0.1.0", path = "../rust-cev/crates/cev-model", features = ["metal", "accelerate"] }
+cev-model = { version = "0.2.1", features = ["metal", "accelerate"] }
 libc = "0.2"
 
 [profile.release]

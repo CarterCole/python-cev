@@ -61,6 +61,68 @@ def test_decide_answers_every_question_with_its_type(cev):
     assert sum(severity["probabilities"].values()) == pytest.approx(1, abs=1e-5)
 
 
+def test_the_model_says_its_family_and_what_it_takes(cev):
+    assert cev.model["family"] == "cev"
+    assert cev.model["modalities"] == ["text"]
+    with Cev.mock(media=True) as m:
+        assert m.model["modalities"] == ["text", "image", "audio"]
+
+
+PNG = b"\x89PNG\r\n\x1a\n\x01\x02\x03"
+SEEN = {"seen": {"type": "noul", "instructions": "Is something shown?"}}
+
+
+def test_images_and_audio_go_as_paths_bytes_or_base64(cev, tmp_path):
+    with pytest.raises(CevError) as e:
+        cev.decide("x", SEEN, images=[PNG])
+    assert code(e) == "bad_request"
+    with pytest.raises(CevError) as e:
+        cev.decide("x", SEEN, audio=b"RIFF....WAVEfmt ")
+    assert code(e) == "bad_request"
+
+    path = tmp_path / "shot.png"
+    path.write_bytes(PNG)
+    with Cev.mock(media=True) as m:
+        plain = m.decide("x", SEEN)["usage"]["input_tokens"]
+        raw = m.decide("x", SEEN, images=[PNG])["usage"]["input_tokens"]
+        assert raw > plain, "the image reached the model"
+        b64 = "data:image/png;base64," + __import__("base64").b64encode(PNG).decode()
+        for image in (path, bytearray(PNG), memoryview(PNG), b64):
+            assert m.decide("x", SEEN, images=[image])["usage"]["input_tokens"] == raw
+        m.decide("x", SEEN, audio=b"RIFF....WAVEfmt ")
+        with pytest.raises(TypeError):
+            m.decide("x", SEEN, images=path)  # one image is still a list
+        with pytest.raises(CevError) as e:
+            m.decide("x", SEEN, images=["not base64!!"])
+        assert code(e) == "bad_request"
+        [ex] = m.examples([{"state": "x", "questions": SEEN, "labels": {"seen": True}, "images": [path]}])
+        assert ex["response"]["usage"]["input_tokens"] == raw
+
+
+def test_namespaces_keep_feedback_apart(cev):
+    team = {"team": QUESTIONS["team"]}
+    acme = cev.decide(TICKET, team, namespace="acme")["answers"]["team"]["x_cev"]
+    plain = cev.decide(TICKET, team)["answers"]["team"]["x_cev"]
+    assert acme["namespace"] == "acme"
+    assert "namespace" not in plain
+
+    assert cev.feedback(decision_id=acme["decision_id"], label="billing")["namespace"] == "acme"
+    cev.feedback(decision_id=plain["decision_id"], label="tech")
+
+    assert len(cev.tasks()) == 2, "every namespace"
+    [mine] = cev.tasks("acme")
+    assert mine["namespace"] == "acme"
+    assert len(cev.tasks("")) == 1, "the default namespace"
+
+    [d] = cev.decisions(namespace="acme")
+    assert d["namespace"] == "acme"
+    assert [r["namespace"] for r in cev.export(namespace="acme")] == ["acme"]
+
+    assert cev.reset_task("router.team") is True, "the default namespace"
+    assert cev.reset_task("router.team", "acme") is True
+    assert cev.reset_task("router.team", "acme") is False
+
+
 def test_state_can_be_text_and_criteria_a_list_of_names(cev):
     questions = {"kind": {"type": "choice", "instructions": "What is this about?", "criteria": ["refund", "bug", "other"]}}
     assert cev.decide("Please refund my last invoice.", questions)["answers"]["kind"]["choice"] == "refund"

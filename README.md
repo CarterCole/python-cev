@@ -8,6 +8,11 @@ state and typed questions: **is this true** (`noul`), **which of these**
 probabilities. The model never generates text, so an answer outside the
 options you listed is impossible, and a request takes tens of milliseconds.
 
+It runs Qwen3 and Qwen3.5 checkpoints with cev's own zero-shot readout, and
+the open decision models natively (Bespoke **Nimble**, Jared Palmer's **Kev**,
+vLLM Semantic Router's **d3**, Liquid's **d1** and **d1-omni**), including
+their image and audio inputs.
+
 This package runs the cev engine inside your Python process as a native
 module: no server, no HTTP, no PyTorch. It uses the GPU on a Mac, Apple's BLAS
 or all the cores on a CPU, and releases the GIL while it works. Every answer is
@@ -41,11 +46,10 @@ cev.feedback(decision_id=answers["severity"]["x_cev"]["decision_id"], label=2)
 ## Install
 
 There are no wheels on PyPI yet, so for now you build the module from source.
-That needs Python >= 3.11, a Rust toolchain, and the engine checked out next to
-this repository:
+That needs Python >= 3.11 and a Rust toolchain; the engine comes from
+crates.io:
 
 ```bash
-git clone https://github.com/CarterCole/rust-cev
 git clone <this repository> python-cev
 pip install ./python-cev          # or: uv add ./python-cev
 ```
@@ -54,17 +58,28 @@ The distribution is called `cev-py` and the module `cev`. macOS builds always
 include Metal and Accelerate; elsewhere the default build is CPU-only (see
 [Building from source](#building-from-source) for CUDA).
 
-Weights are not bundled. `Cev.load` takes a Hugging Face repo id or a local
-directory with a Qwen3 safetensors checkpoint. It looks in the Hugging Face
-cache first, then in `~/.cache/cev/models`, and downloads into the latter if
-the model is in neither (`HF_TOKEN` is honoured).
+Weights are not bundled. `Cev.load` takes a Hugging Face repo id, a local
+directory or a short name, and works out the model family from the files. It
+looks in the Hugging Face cache first, then in `~/.cache/cev/models`, and
+downloads into the latter if the model is in neither (`HF_TOKEN` is
+honoured). Adapters pull their pinned base model too.
 
-| Model | Download | Notes |
-| --- | ---: | --- |
-| `Qwen/Qwen3-0.6B` | 1.5 GB | fastest; weaker on judgement calls (it scores the login crash above as cosmetic) |
-| `Qwen/Qwen3-1.7B` | 4.1 GB | the default |
-| `Qwen/Qwen3-4B-Instruct-2507` | | wants a GPU |
-| a directory | | a LoRA fine-tune from rust-cev's `training/train_lora.py`, or an int8 copy from its `quantize` example (CPU only) |
+| `model` | Download | Takes | Notes |
+| --- | ---: | --- | --- |
+| `Qwen/Qwen3-0.6B` | 1.5 GB | text | fastest; weaker on judgement calls (it scores the login crash above as cosmetic) |
+| `Qwen/Qwen3-1.7B` | 4.1 GB | text | the default |
+| `Qwen/Qwen3-4B-Instruct-2507` | | text | wants a GPU |
+| `Qwen/Qwen3.5-*` | | text, images | cev's zero-shot readout on the hybrid Qwen3.5 |
+| `kev:0.8b`, `kev:4b`, `kev` (9B) | | text | Kev's LoRA and pointer head on Qwen3.5-Base, merged at load |
+| `nimble-v3` (9B) | | text | Bespoke Nimble's LoRA and schema prompt on Qwen3.5-9B |
+| `d3:2b` … `d3` (27B) | | text, images | d3's 255-way readout, attention run bidirectionally |
+| `d1` (3B) | | text, images | Liquid's LFM2.5-VL decision model |
+| `d1-omni` (600M) | 2.3 GB | text, images, audio | Liquid's encoder with a decision head |
+| a directory | | | any of the above, a LoRA fine-tune from rust-cev's `training/train_lora.py`, or an int8 Qwen3 copy from its `quantize` example (CPU only) |
+
+`cev.model["family"]` and `cev.model["modalities"]` say what was loaded and
+what it takes. rust-cev's [Models](https://github.com/CarterCole/rust-cev#models)
+section has the details and the parity checks against PyTorch.
 
 ## Questions and answers
 
@@ -95,7 +110,45 @@ every request (`debias`):
 | `none` | the raw distribution | |
 | `calibrate` | subtracts what the model answers to the same question over empty evidence | free after the first request with a question |
 | `permute` | averages over rotations of the option order (up to `max_permutations`) | more tokens in the pass |
-| `full` (default) | both | about 2x `calibrate` |
+| `full` | both | about 2x `calibrate` |
+| `auto` (default) | `full` for zero-shot code readouts (Qwen3, Qwen3.5, Nimble), `none` for the trained decision models (Kev, d3, d1, d1-omni) | |
+
+## Images and sound
+
+Models with `image` or `audio` in `cev.model["modalities"]` take pictures and
+sound with the request. Every question sees them, before the state. Pass a
+file path (`pathlib.Path`), the file's bytes, or a base64 string, with or
+without a `data:` header.
+
+```python
+from pathlib import Path
+
+with Cev.load("d1-omni") as cev:
+    res = cev.decide(
+        "A customer sent this screenshot of the checkout page.",
+        {
+            "outcome": {"type": "choice", "instructions": "What does the screenshot show?",
+                        "criteria": {"success": "The purchase went through", "failure": "Something went wrong"}},
+            "needs_help": {"type": "noul", "instructions": "Does the customer need help from support?"},
+        },
+        images=[Path("checkout.png")],
+    )
+    res["answers"]["outcome"]["probabilities"]   # {'success': 0.033, 'failure': 0.967}
+
+    cev.decide(
+        "A voicemail left on the support line.",
+        {"callback": {"type": "noul", "instructions": "Does the caller want a call back?"}},
+        audio=Path("voicemail.wav"),
+    )
+```
+
+- Images: PNG, JPEG, WebP or GIF, for `d1`, `d1-omni`, `d3` and Qwen3.5.
+  Each family resizes and tiles them its own way.
+- Audio: one WAV clip, for `d1-omni`. 16 kHz mono is best; other rates and
+  stereo are resampled and mixed down. d1-omni takes images or audio in one
+  request, not both.
+- A plain `str` is always read as base64, never as a path.
+- A model that does not take what you sent raises `CevError` with code `bad_request`.
 
 ## Feedback and online learning
 
@@ -125,6 +178,11 @@ cev.tasks()
   a full distribution `{option: probability}` for any of them.
 - `cev.examples([{"state": ..., "questions": ..., "labels": ...}])` decides and
   labels in one call, for seeding a task with examples you already have.
+- A **namespace** keeps feedback apart. Adapters are kept per namespace and
+  task, so labels on decisions made with `namespace="acme"` only change the
+  answers served with `namespace="acme"`: one per customer, say. Requests
+  without one share the default namespace. `cev.tasks("acme")` and
+  `cev.reset_task(task, "acme")` work on one namespace; `cev.tasks()` lists them all.
 
 ## The decision log
 
@@ -148,13 +206,13 @@ rows = cev.export(labeled=False)   # the same, parsed; every decision, labelled 
 | --- | --- |
 | `Cev.load(model=None, **options)` | load a model |
 | `Cev.mock(**options)` | a keyword-overlap stand-in: no weights, instant, the whole API works. For tests |
-| `cev.model` | `{'id', 'backbone', 'hidden_size', 'max_options', 'prompt_version', 'threads', 'concurrency'}` |
-| `cev.decide(state, questions, *, debias=None, no_store=False)` | answer the questions |
+| `cev.model` | `{'id', 'backbone', 'family', 'modalities', 'hidden_size', 'max_options', 'prompt_version', 'threads', 'concurrency'}` |
+| `cev.decide(state, questions, *, images=None, audio=None, namespace=None, debias=None, no_store=False)` | answer the questions |
 | `cev.feedback(*, decision_id=None, request_id=None, question_id=None, label=None, weight=None, comment=None, metadata=None)` | label or comment on an answer |
-| `cev.examples(examples)` | decide, then learn from the labels |
-| `cev.tasks()` / `cev.reset_task(task)` | adapter status / drop an adapter (its labels stay) |
-| `cev.decisions(*, task=None, limit=50, offset=0)` / `cev.decision(decision_id)` | read the log |
-| `cev.export(...)` / `cev.export_ndjson(...)` | training rows; filter by `task`, `model`, `labeled`, `since`, `limit` |
+| `cev.examples(examples)` | decide, then learn from the labels; each example may carry `images`, `audio` and `namespace` |
+| `cev.tasks(namespace=None)` / `cev.reset_task(task, namespace=None)` | adapter status / drop an adapter (its labels stay) |
+| `cev.decisions(*, task=None, namespace=None, limit=50, offset=0)` / `cev.decision(decision_id)` | read the log |
+| `cev.export(...)` / `cev.export_ndjson(...)` | training rows; filter by `task`, `namespace`, `model`, `labeled`, `since`, `limit` |
 | `cev.stats()` | counts |
 | `cev.close()` | free the model once the calls in flight have returned; `with Cev.load(...) as cev:` does it for you |
 | `info()` (`from cev import info`) | what the module was built with: `{'version', 'metal', 'accelerate', 'cuda', 'cores', 'performance_cores', 'threads'}` |
@@ -163,13 +221,13 @@ rows = cev.export(labeled=False)   # the same, parsed; every decision, labelled 
 
 | Option | Default | |
 | --- | --- | --- |
-| `model` | `Qwen/Qwen3-1.7B` | Hugging Face repo id or a directory |
+| `model` | `Qwen/Qwen3-1.7B` | Hugging Face repo id, a directory, or a short name (`kev:0.8b`, `d1-omni`, ...); see [Install](#install) |
 | `device` | `auto` | `auto` (Metal, then CUDA, then CPU), `cpu`, `metal`, `cuda` |
 | `dtype` | `auto` | `f32` on CPU and for checkpoints up to 4 GB on Metal, else `bf16`; or `f16` |
 | `threads` | performance cores | CPU threads for the tensor kernels; see [Performance](#performance) |
 | `concurrency` | `1` | forward passes that may run at once |
 | `db` | `:memory:` | SQLite file for the log |
-| `debias` | `full` | default for requests that do not set it |
+| `debias` | `auto` | default for requests that do not set it |
 | `max_permutations` | `4` | most option rotations per question |
 | `online_learning` | `True` | when false, labels are stored but nothing adapts |
 | `min_examples` | `8` | labels before an adapter may be served |
@@ -178,7 +236,8 @@ rows = cev.export(labeled=False)   # the same, parsed; every decision, labelled 
 | `prefix_cache_tokens` | `65536` | tokens of state prefixes kept for reuse |
 | `name` | `cev-<model>` | the `model` reported in responses |
 
-`Cev.mock` takes the options from `db` to `store_features`.
+`Cev.mock` takes the options from `db` to `store_features`, and `media=True`
+to accept images and audio (it is text-only otherwise, like Qwen3).
 
 ### Errors
 
@@ -186,7 +245,7 @@ Every failure is a `cev.CevError` with a `code`:
 
 | `code` | Means |
 | --- | --- |
-| `bad_request` | the call was malformed: no questions, one option, a label that is not an option |
+| `bad_request` | the call was malformed: no questions, one option, a label that is not an option, images or audio the model does not take |
 | `not_found` | no such decision (was it made with `no_store`?) |
 | `closed` | the instance was closed |
 | `internal` | everything else: missing weights, a failed download, I/O |
@@ -268,8 +327,18 @@ uv run maturin develop --release --features cuda   # NVIDIA GPUs (needs the CUDA
 uv run python scripts/bench.py --model Qwen/Qwen3-0.6B --device cpu
 ```
 
+To build against an engine checkout instead of crates.io (with rust-cev next
+to this repository):
+
+```bash
+uv run maturin develop --release \
+  --config 'patch.crates-io.cev-core.path="../rust-cev/crates/cev-core"' \
+  --config 'patch.crates-io.cev-model.path="../rust-cev/crates/cev-model"' \
+  --config 'patch.crates-io.cev-runtime.path="../rust-cev/crates/cev-runtime"'
+```
+
 - `src/lib.rs` is a small Rust crate (PyO3) that links the cev crates from
-  `../rust-cev` (`Cargo.toml`); `python/cev/` is the Python API on top of it.
+  crates.io (`Cargo.toml`); `python/cev/` is the Python API on top of it.
 - The module uses the stable ABI (`abi3`), so one build serves Python 3.11 and
   later.
 - Only macOS on Apple silicon is tested so far. The same engine builds and
@@ -279,7 +348,7 @@ uv run python scripts/bench.py --model Qwen/Qwen3-0.6B --device cpu
 ## How this relates to rust-cev
 
 [rust-cev](https://github.com/CarterCole/rust-cev) is the project: the prompt
-compiler, the Qwen3 engine, the decision log, the online learner, an HTTP and
+compiler, the engines for Qwen3, Qwen3.5 and the decision models, the decision log, the online learner, an HTTP and
 GraphQL server, a browser build and a typed Rust SDK. This repository is only
 the Python binding (about 300 lines of Rust glue and a typed wrapper), and
 none of the engine is copied here. The same binding for Node.js is

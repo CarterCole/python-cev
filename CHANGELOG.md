@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+Takes cev 0.2.1, now from crates.io: building no longer needs a rust-cev
+checkout next to this repository.
+
+### Added
+- `Cev.load(model)` runs the open decision models natively: Bespoke Nimble,
+  Kev, d3, d1 and d1-omni, plus Qwen3.5 checkpoints. Short names work
+  (`"kev:0.8b"`, `"d1-omni"`, `"nimble-v3"`, ...); the family is detected from
+  the repository's files.
+- `images=` and `audio=` on `decide()`, and in `examples()`, as paths, bytes
+  or base64, for models that take them.
+- `cev.model["family"]` and `cev.model["modalities"]`.
+- Namespaces: `namespace=` on `decide()` and in `examples()` keeps feedback and
+  adapters apart. `tasks(namespace)`, `reset_task(task, namespace)`,
+  `decisions(namespace=)` and `export(namespace=)` read one namespace.
+- `Cev.mock(media=True)`, which accepts images and audio.
+
+### Changed
+- `debias` defaults to `"auto"`: `"full"` for zero-shot code readouts as
+  before, `"none"` for the trained decision models.
+
 ## 0.1.0 (2026-10-03)
 
 First version: cev in-process for Python.

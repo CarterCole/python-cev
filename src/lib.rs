@@ -7,7 +7,7 @@
 //! rayon's pool (`threads`), which is shared by the whole process.
 
 use cev_core::{Backend, Debias, ExamplesRequest, FeedbackRequest, MockBackend, SystemOneRequest};
-use cev_model::{Engine, EngineOptions};
+use cev_model::EngineOptions;
 use cev_runtime::{Cev as Runtime, CevError, CevResult, ExportFilter, LearnConfig, RuntimeConfig, Store};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -21,6 +21,8 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock, RwLock};
 #[serde(default, deny_unknown_fields)]
 struct Options {
     mock: bool,
+    /// The mock accepts images and audio.
+    media: bool,
     model: Option<String>,
     name: Option<String>,
     device: Option<String>,
@@ -41,6 +43,7 @@ struct Options {
 #[serde(default, deny_unknown_fields)]
 struct Page {
     task: Option<String>,
+    namespace: Option<String>,
     limit: Option<usize>,
     offset: Option<usize>,
 }
@@ -129,10 +132,13 @@ impl Shared {
         init_log();
         let threads = init_threads(o.threads);
         let backend: Arc<dyn Backend> = if o.mock {
-            Arc::new(MockBackend::default())
+            let mock = MockBackend::default();
+            Arc::new(if o.media { mock.with_media() } else { mock })
         } else {
+            // Detects the family (cev on Qwen3/Qwen3.5, Nimble, Kev, d3, d1,
+            // d1-omni) from the repository's files; takes short names too.
             let d = EngineOptions::default();
-            Arc::new(Engine::load(EngineOptions {
+            cev_model::load(EngineOptions {
                 model: o.model.unwrap_or(d.model),
                 device: o.device.unwrap_or(d.device),
                 dtype: o.dtype.unwrap_or(d.dtype),
@@ -140,7 +146,7 @@ impl Shared {
                 prefix_cache_tokens: o.prefix_cache_tokens.unwrap_or(d.prefix_cache_tokens),
                 name: o.name,
                 ..d
-            })?)
+            })?
         };
         let d = RuntimeConfig::default();
         let cfg = RuntimeConfig {
@@ -268,21 +274,23 @@ impl Cev {
         self.run(py, |s| text(&s.runtime.feedback(&parse::<FeedbackRequest>(request)?)?))
     }
 
-    /// `GET /v1/tasks`
-    fn tasks(&self, py: Python<'_>) -> PyResult<String> {
-        self.run(py, |s| text(&s.runtime.tasks()))
+    /// `GET /v1/tasks[?namespace=]`: every namespace when `namespace` is `None`.
+    #[pyo3(signature = (namespace=None))]
+    fn tasks(&self, py: Python<'_>, namespace: Option<&str>) -> PyResult<String> {
+        self.run(py, |s| text(&s.runtime.tasks(namespace)))
     }
 
-    /// `DELETE /v1/tasks/{task}`
-    fn reset_task(&self, py: Python<'_>, task: &str) -> PyResult<String> {
-        self.run(py, |s| text(&s.runtime.reset_task(task)?))
+    /// `DELETE /v1/tasks/{task}[?namespace=]`: the default namespace when `None`.
+    #[pyo3(signature = (task, namespace=None))]
+    fn reset_task(&self, py: Python<'_>, task: &str, namespace: Option<&str>) -> PyResult<String> {
+        self.run(py, |s| text(&s.runtime.reset_task(namespace.unwrap_or_default(), task)?))
     }
 
     /// `GET /v1/decisions`
     fn decisions(&self, py: Python<'_>, page: &str) -> PyResult<String> {
         self.run(py, |s| {
             let p: Page = parse(page)?;
-            text(&s.runtime.store().recent_decisions(p.task.as_deref(), p.limit.unwrap_or(50).min(1000), p.offset.unwrap_or(0))?)
+            text(&s.runtime.store().recent_decisions(p.task.as_deref(), p.namespace.as_deref(), p.limit.unwrap_or(50).min(1000), p.offset.unwrap_or(0))?)
         })
     }
 
@@ -311,7 +319,7 @@ impl Cev {
 
     /// `GET /v1/stats`
     fn stats(&self, py: Python<'_>) -> PyResult<String> {
-        self.run(py, |s| text(&json!({"store": s.runtime.stats()?, "tasks": s.runtime.tasks().len(), "model": s.runtime.model_info()})))
+        self.run(py, |s| text(&json!({"store": s.runtime.stats()?, "tasks": s.runtime.tasks(None).len(), "model": s.runtime.model_info()})))
     }
 
     /// Free the model once the calls in flight have returned.

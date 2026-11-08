@@ -2,7 +2,7 @@
 
     from cev import Cev
 
-    cev = Cev.load("Qwen/Qwen3-0.6B")
+    cev = Cev.load("Qwen/Qwen3-0.6B")      # or "kev:0.8b", "d1-omni", a directory, ...
     res = cev.decide(
         {"ticket": "The app crashes when I tap Log in"},
         {"team": {"type": "choice", "instructions": "Which team?",
@@ -14,7 +14,9 @@
 
 from __future__ import annotations
 
+import base64
 import json
+import os
 from typing import Any, Callable, Mapping, Sequence, TypeVar
 
 from . import _native
@@ -33,9 +35,12 @@ from ._types import (
     ExampleResult,
     ExportRow,
     FeedbackRecord,
+    Family,
     FeedbackResponse,
     Info,
     Label,
+    Media,
+    Modality,
     ModelInfo,
     NoulAnswer,
     OptionSpec,
@@ -63,10 +68,13 @@ __all__ = [
     "Example",
     "ExampleResult",
     "ExportRow",
+    "Family",
     "FeedbackRecord",
     "FeedbackResponse",
     "Info",
     "Label",
+    "Media",
+    "Modality",
     "ModelInfo",
     "NoulAnswer",
     "OptionSpec",
@@ -99,7 +107,7 @@ class CevError(Exception):
 _T = TypeVar("_T")
 
 
-def _call(fn: Callable[..., _T], *args: str) -> _T:
+def _call(fn: Callable[..., _T], *args: str | None) -> _T:
     """The native module reports errors as ``<code>: <message>``."""
     try:
         return fn(*args)
@@ -111,7 +119,31 @@ def _call(fn: Callable[..., _T], *args: str) -> _T:
 
 
 def _json(fn: Callable[..., str], *args: Any) -> Any:
-    return json.loads(_call(fn, *(a if isinstance(a, str) else json.dumps(a) for a in args)))
+    return json.loads(_call(fn, *(a if a is None or isinstance(a, str) else json.dumps(a) for a in args)))
+
+
+def _encode(media: Media) -> str:
+    """Base64 for a path or bytes; a ``str`` is already in the wire format."""
+    if isinstance(media, str):
+        return media
+    if isinstance(media, os.PathLike):
+        with open(media, "rb") as f:
+            media = f.read()
+    if isinstance(media, (bytes, bytearray, memoryview)):
+        return base64.b64encode(media).decode("ascii")
+    raise TypeError(f"images and audio are paths, bytes or base64 strings, not {type(media).__name__}")
+
+
+def _media(request: Mapping[str, Any]) -> dict[str, Any]:
+    """A request body with its images and audio as base64 strings."""
+    out = dict(request)
+    if out.get("images") is not None:
+        if isinstance(out["images"], (str, bytes, os.PathLike)):
+            raise TypeError("images is a list; pass [image] for one")
+        out["images"] = [_encode(m) for m in out["images"]]
+    if out.get("audio") is not None:
+        out["audio"] = _encode(out["audio"])
+    return out
 
 
 def _given(**fields: Any) -> dict[str, Any]:
@@ -156,11 +188,15 @@ class Cev:
         debias: Debias | None = None,
         max_permutations: int | None = None,
     ) -> Cev:
-        """Load a Qwen3 checkpoint from a directory or the Hugging Face cache,
+        """Load a model from a directory or the Hugging Face cache,
         downloading it into ``~/.cache/cev/models`` on first use.
 
-        :param model: Hugging Face repo id or a local directory with Qwen3
-            safetensors (default ``Qwen/Qwen3-1.7B``).
+        :param model: What to run (default ``Qwen/Qwen3-1.7B``): a Hugging Face
+            repo id, a local directory, or a short name (``kev``, ``kev:0.8b``,
+            ``kev:4b``, ``nimble-v3``, ``d3``, ``d3:2b``, ``d1``, ``d1-omni``).
+            The family is detected from the files: Qwen3 and Qwen3.5
+            checkpoints, or the Nimble, Kev, d3, d1 and d1-omni decision models.
+            ``model.modalities`` says whether it takes images or audio.
         :param name: Name reported as ``model`` in responses (default ``cev-<model name>``).
         :param device: Default ``auto``: Metal, then CUDA, then CPU, of those compiled in.
         :param dtype: Default ``auto``: f32 on CPU and for checkpoints up to 4 GB on Metal, else bf16.
@@ -177,7 +213,7 @@ class Cev:
         :param store_features: Keep hidden states with decisions (default True).
             Online learning from later feedback needs them.
         :param min_examples: Labels a task needs before its adapter may be served (default 8).
-        :param debias: Default position-bias correction (default ``full``).
+        :param debias: Default position-bias correction (default ``auto``).
         :param max_permutations: Most option rotations per question when permuting (default 4).
         """
         return cls._open(
@@ -207,11 +243,16 @@ class Cev:
         min_examples: int | None = None,
         debias: Debias | None = None,
         max_permutations: int | None = None,
+        media: bool | None = None,
     ) -> Cev:
         """A keyword-overlap stand-in for the model: no weights, instant, and
-        the whole API works, including learning. For tests and wiring."""
+        the whole API works, including learning. For tests and wiring.
+
+        :param media: Accept ``images`` and ``audio`` (default False: text only, like Qwen3).
+        """
         return cls._open(
             mock=True,
+            media=media,
             db=db,
             online_learning=online_learning,
             store_features=store_features,
@@ -231,6 +272,9 @@ class Cev:
         *,
         no_store: bool = False,
         debias: Debias | None = None,
+        namespace: str | None = None,
+        images: Sequence[Media] | None = None,
+        audio: Media | None = None,
     ) -> DecideResponse:
         """Answer every question about ``state`` in one forward pass.
 
@@ -238,9 +282,24 @@ class Cev:
         :param questions: Asked together and answered under the same ids.
         :param no_store: Do not log this request. Its answers then cannot take feedback.
         :param debias: Overrides the instance's ``debias`` for this request.
+        :param namespace: Feedback bucket. Online adapters are kept per namespace
+            and task, so labels on decisions made in one namespace only change
+            answers served in that namespace (one per customer, say). Omit for
+            the default bucket.
+        :param images: Images every question sees, before the state: PNG, JPEG,
+            WebP or GIF. Needs a model with ``image`` in ``model["modalities"]``
+            (d1, d1-omni, d3).
+        :param audio: One sound clip every question hears: WAV (16 kHz mono is
+            best; other rates are resampled). Needs a model with ``audio`` in
+            ``model["modalities"]`` (d1-omni).
         """
-        request = {"state": state, "questions": questions, "no_store": no_store, **_given(debias=debias)}
-        return _json(self._native.decide, request)
+        request = {
+            "state": state,
+            "questions": questions,
+            "no_store": no_store,
+            **_given(debias=debias, namespace=namespace, images=images, audio=audio),
+        }
+        return _json(self._native.decide, _media(request))
 
     def feedback(
         self,
@@ -274,19 +333,26 @@ class Cev:
 
     def examples(self, examples: Sequence[Example]) -> list[ExampleResult]:
         """Decide each example, then apply its labels as feedback."""
-        return _json(self._native.examples, {"examples": list(examples)})
+        return _json(self._native.examples, {"examples": [_media(e) for e in examples]})
 
-    def tasks(self) -> list[TaskInfo]:
-        """The online adapter of every task that has labels."""
-        return _json(self._native.tasks)
+    def tasks(self, namespace: str | None = None) -> list[TaskInfo]:
+        """The online adapter of every task that has labels: in every
+        namespace, or only in ``namespace`` (``""`` for the default one)."""
+        return _json(self._native.tasks, namespace)
 
-    def reset_task(self, task: str) -> bool:
-        """Drop a task's adapter. Its labels stay in the log. Returns whether there was one."""
-        return _json(self._native.reset_task, task)
+    def reset_task(self, task: str, namespace: str | None = None) -> bool:
+        """Drop a task's adapter in ``namespace`` (default: the default one).
+        Its labels stay in the log. Returns whether there was one."""
+        return _json(self._native.reset_task, task, namespace)
 
-    def decisions(self, *, task: str | None = None, limit: int = 50, offset: int = 0) -> list[DecisionRecord]:
-        """Recent decisions, newest first (at most 1000 per call)."""
-        return _json(self._native.decisions, _given(task=task, limit=limit, offset=offset))
+    def decisions(
+        self, *, task: str | None = None, namespace: str | None = None, limit: int = 50, offset: int = 0
+    ) -> list[DecisionRecord]:
+        """Recent decisions, newest first (at most 1000 per call).
+
+        :param namespace: Only this namespace (``""`` for the default one).
+        """
+        return _json(self._native.decisions, _given(task=task, namespace=namespace, limit=limit, offset=offset))
 
     def decision(self, decision_id: str) -> DecisionDetail | None:
         """One decision with its state, the exact prompt and all its feedback; ``None`` if unknown."""
@@ -296,6 +362,7 @@ class Cev:
         self,
         *,
         task: str | None = None,
+        namespace: str | None = None,
         model: str | None = None,
         labeled: bool = True,
         since: int | None = None,
@@ -303,16 +370,18 @@ class Cev:
     ) -> list[ExportRow]:
         """Training rows: one per labelled decision, or per decision with ``labeled=False``.
 
+        :param namespace: Only this namespace (``""`` for the default one).
         :param model: Only decisions made by this model id.
         :param since: Only rows decided or labelled at or after this unix time in milliseconds.
         """
-        text = self.export_ndjson(task=task, model=model, labeled=labeled, since=since, limit=limit)
+        text = self.export_ndjson(task=task, namespace=namespace, model=model, labeled=labeled, since=since, limit=limit)
         return [json.loads(line) for line in text.splitlines()]
 
     def export_ndjson(
         self,
         *,
         task: str | None = None,
+        namespace: str | None = None,
         model: str | None = None,
         labeled: bool = True,
         since: int | None = None,
@@ -320,7 +389,7 @@ class Cev:
     ) -> str:
         """The same rows as newline-delimited JSON, the file rust-cev's
         ``training/train_lora.py --source`` reads."""
-        filter = _given(task=task, model=model, labeled=labeled, since=since, limit=limit)
+        filter = _given(task=task, namespace=namespace, model=model, labeled=labeled, since=since, limit=limit)
         return _call(self._native.export, json.dumps(filter))
 
     def stats(self) -> Stats:

@@ -4,10 +4,24 @@ only describe them to a type checker."""
 
 from __future__ import annotations
 
+import os
 from typing import Any, Literal, Mapping, NotRequired, Sequence, TypedDict
 
-Debias = Literal["none", "calibrate", "permute", "full"]
-"""How to correct the model's option-position bias; ``full`` does both."""
+Debias = Literal["auto", "none", "calibrate", "permute", "full"]
+"""How to correct the model's option-position bias; ``full`` does both.
+``auto`` is the model's own default: ``full`` for zero-shot code readouts
+(Qwen3, Qwen3.5, Nimble), ``none`` for trained decision models (Kev, d3, d1,
+d1-omni)."""
+
+Media = str | bytes | bytearray | memoryview | os.PathLike[str]
+"""An image or a sound clip: a file path, the file's bytes, or base64 (with
+or without a ``data:...;base64,`` header). A plain ``str`` is always base64;
+pass a :class:`pathlib.Path` for a file."""
+
+Family = Literal["cev", "nimble", "kev", "d3", "d1", "d1-omni"]
+"""Decision-model family: how the prompt is built and the answer read out."""
+
+Modality = Literal["text", "image", "audio"]
 
 Device = Literal["auto", "cpu", "metal", "cuda"]
 DType = Literal["auto", "f32", "f16", "bf16"]
@@ -42,6 +56,8 @@ class AnswerMeta(TypedDict):
     decision_id: str
     """Send this back with ``feedback``. Empty when the request had ``no_store``."""
     task: str
+    namespace: NotRequired[str]
+    """The feedback bucket, when the request named one."""
     adapted: bool
     """True when an online adapter adjusted this answer."""
     base_probabilities: NotRequired[list[float]]
@@ -98,6 +114,8 @@ class FeedbackResponse(TypedDict):
     feedback_id: str
     decision_id: str
     task: str
+    namespace: NotRequired[str]
+    """The decision's feedback bucket, when it has one."""
     served_loss: NotRequired[float]
     """Log loss of the answer that was served, on this label."""
     learned: bool
@@ -112,6 +130,9 @@ class Example(TypedDict):
     state: Any
     questions: Mapping[str, Question]
     labels: Mapping[str, Label]
+    namespace: NotRequired[str]
+    images: NotRequired[Sequence[Media]]
+    audio: NotRequired[Media]
 
 
 class ExampleResult(TypedDict):
@@ -123,6 +144,8 @@ class TaskInfo(TypedDict):
     """One task's online adapter."""
 
     task: str
+    namespace: NotRequired[str]
+    """Feedback bucket; absent for the default one."""
     examples: int
     """Labels seen."""
     buffered: int
@@ -142,6 +165,9 @@ class ModelInfo(TypedDict):
     object: Literal["model"]
     backbone: str
     """Hugging Face repo id or directory of the weights."""
+    family: Family
+    modalities: list[Modality]
+    """What a request may carry besides text."""
     hidden_size: int
     max_options: int
     """Most options one question can have."""
@@ -167,6 +193,8 @@ class DecisionRecord(TypedDict):
     question_id: str
     model: str
     task: str
+    namespace: NotRequired[str]
+    """Feedback bucket; absent for the default one."""
     kind: Literal["noul", "choice", "score"]
     question: Question
     options: list[OptionSpec]
@@ -210,6 +238,8 @@ class ExportRow(TypedDict):
     question_id: str
     model: str
     task: str
+    namespace: NotRequired[str]
+    """Feedback bucket; absent for the default one."""
     type: Literal["noul", "choice", "score"]
     prompt: str
     """The full prompt; the answer is the next token."""
