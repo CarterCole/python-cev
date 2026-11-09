@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 (unreleased)
+## 0.2.0 (2026-11-08)
 
 Takes cev 0.2.1, now from crates.io: building no longer needs a rust-cev
 checkout next to this repository. First version on PyPI, as `cev-py`, with
