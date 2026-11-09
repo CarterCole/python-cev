@@ -1,10 +1,10 @@
 [package]
 name = "cev-py"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "Apache-2.0"
 description = "Python bindings for cev: typed, calibrated decisions in one forward pass."
-repository = "https://github.com/CarterCole/rust-cev"
+repository = "https://github.com/CarterCole/python-cev"
 publish = false
 
 [lib]
@@ -40,4 +40,7 @@ libc = "0.2"
 [profile.release]
 lto = "thin"
 codegen-units = 4
-strip = "symbols"
+# Not stripped: with Xcode 27 any `strip` level yields a dylib that dyld
+# refuses ("mis-aligned LINKEDIT string pool"). Release builds carry no
+# debuginfo anyway; symbols add about 2 MB.
+strip = "none"

@@ -1,9 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 (unreleased)
 
 Takes cev 0.2.1, now from crates.io: building no longer needs a rust-cev
-checkout next to this repository.
+checkout next to this repository. First version on PyPI, as `cev-py`, with
+wheels for macOS arm64 and Linux x86_64/aarch64.
 
 ### Added
 - `Cev.load(model)` runs the open decision models natively: Bespoke Nimble,
@@ -21,6 +22,11 @@ checkout next to this repository.
 ### Changed
 - `debias` defaults to `"auto"`: `"full"` for zero-shot code readouts as
   before, `"none"` for the trained decision models.
+
+### Fixed
+- The macOS module loads when built with Xcode 27: release builds are no
+  longer stripped, which made dyld reject the library ("mis-aligned LINKEDIT
+  string pool").
 
 ## 0.1.0 (2026-10-03)
 

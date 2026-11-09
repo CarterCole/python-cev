@@ -59,11 +59,17 @@ change done.
 
 ## Releasing
 
-Not automated yet: there are no wheels on PyPI, so the package is built from
-source. The cev crates are on crates.io (pinned in `Cargo.lock`; take a new
-engine release with `cargo update -p cev-core -p cev-model -p cev-runtime`,
-raising the requirements in `Cargo.toml` first for a new minor version).
-Publishing still needs a CI job that builds wheels per platform
-(`maturin build --release`; one abi3 wheel per platform covers every Python).
-To build against an engine checkout, see "Building from source" in the README.
-The PyPI names `cev` and `pycev` are taken; this distribution is `cev-py`.
+`.github/workflows/publish.yml` builds abi3 wheels (macOS arm64, manylinux_2_28
+x86_64 and aarch64) and an sdist, tests each wheel, and uploads them to PyPI
+as `cev-py` through Trusted Publishing when a GitHub release is published; no
+token is stored. PyPI trusts this repository, workflow `publish.yml` and
+environment `pypi`. To release: raise `version` in `pyproject.toml` and
+`Cargo.toml` (keep them equal), date the `CHANGELOG.md` heading, commit, then
+publish a release tagged `v<version>`; the job fails if the tag and version
+differ. A manual run of the workflow only builds and tests.
+
+The cev crates are on crates.io (pinned in `Cargo.lock`; take a new engine
+release with `cargo update -p cev-core -p cev-model -p cev-runtime`, raising
+the requirements in `Cargo.toml` first for a new minor version). To build
+against an engine checkout, see "Building from source" in the README. The PyPI
+names `cev` and `pycev` are taken; this distribution is `cev-py`.

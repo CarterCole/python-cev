@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "cev-py"
-version = "0.1.0"
+version = "0.2.0"
 description = "Typed, calibrated decisions from a small local LLM in one forward pass: is this true, which of these, which level. The cev engine in-process (Metal, Accelerate, multi-core CPU), with a decision log, feedback and online learning."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -21,6 +21,8 @@ classifiers = [
 ]
 
 [project.urls]
+Repository = "https://github.com/CarterCole/python-cev"
+Changelog = "https://github.com/CarterCole/python-cev/blob/main/CHANGELOG.md"
 Engine = "https://github.com/CarterCole/rust-cev"
 
 [dependency-groups]

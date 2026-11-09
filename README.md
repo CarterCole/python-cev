@@ -45,18 +45,15 @@ cev.feedback(decision_id=answers["severity"]["x_cev"]["decision_id"], label=2)
 
 ## Install
 
-There are no wheels on PyPI yet, so for now you build the module from source.
-That needs Python >= 3.11 and a Rust toolchain; the engine comes from
-crates.io:
-
 ```bash
-git clone <this repository> python-cev
-pip install ./python-cev          # or: uv add ./python-cev
+pip install cev-py                # or: uv add cev-py
 ```
 
-The distribution is called `cev-py` and the module `cev`. macOS builds always
-include Metal and Accelerate; elsewhere the default build is CPU-only (see
-[Building from source](#building-from-source) for CUDA).
+The distribution is called `cev-py` and the module `cev`. Wheels are built for
+macOS on Apple silicon (with Metal and Accelerate) and for Linux x86_64 and
+aarch64 (glibc 2.28 or later, CPU only); one wheel covers every Python from
+3.11. Anywhere else pip builds from the source distribution, which needs a Rust
+toolchain; for CUDA, see [Building from source](#building-from-source).
 
 Weights are not bundled. `Cev.load` takes a Hugging Face repo id, a local
 directory or a short name, and works out the model family from the files. It
