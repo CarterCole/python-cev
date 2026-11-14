@@ -1,3 +1,5 @@
+![CEV-PY](.github/banner.png)
+
 # cev-py
 
 > Typed, calibrated decisions from a small local model, in one forward pass.
